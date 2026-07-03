@@ -399,7 +399,7 @@
 </div>
 
 <script>
-const RAW = [
+const FALLBACK_RAW = [
   {
     "tournament_id": 29551,
     "batch_name": "IND-PG-B-109",
@@ -4150,7 +4150,7 @@ function parseBatch(row) {
   return { ...row, batch_code: code, display_name: display, country, level, coach_name: coachName, fide_rating: fideRating };
 }
 
-const DATA = RAW.map(parseBatch);
+let DATA = [];
 
 function startOfWeek(d) {
   const x = new Date(d);
@@ -4173,8 +4173,10 @@ function inRange(dateStr, start, end) {
   return d >= start && d <= end;
 }
 
-document.getElementById("asof").textContent =
-  "Data as of today · " + today.toDateString();
+function setAsOf(text) {
+  document.getElementById("asof").textContent = text;
+}
+setAsOf("Loading live data…");
 
 document.getElementById("footnote").textContent =
   `Week window: ${toISO(thisWeekStart)} → ${toISO(thisWeekEnd)}. "Unfilled" = registration still open for a batch that already started last week.`;
@@ -4189,6 +4191,7 @@ let state = { view: "all", level: "", country: "", status: "open", coach: "", se
 
 function populateSelect(id, values) {
   const sel = document.getElementById(id);
+  while (sel.options.length > 1) sel.remove(1); // keep the default "All ..." option, drop the rest
   values.forEach(v => {
     const opt = document.createElement("option");
     opt.value = v;
@@ -4197,24 +4200,29 @@ function populateSelect(id, values) {
   });
 }
 
-const levels = [...new Set(DATA.map(r => r.level))].sort();
-const countries = [...new Set(DATA.map(r => r.country))].sort();
-populateSelect("f-level", levels);
-populateSelect("f-country", countries.map(c => c));
+let levels = [];
+let countries = [];
 
-// show country name in dropdown label
-Array.from(document.getElementById("f-country").options).forEach(opt => {
-  if (opt.value && COUNTRY_NAMES[opt.value]) {
-    opt.textContent = `${opt.value} — ${COUNTRY_NAMES[opt.value]}`;
-  }
-});
+function refreshFilterOptions() {
+  levels = [...new Set(DATA.map(r => r.level))].sort();
+  countries = [...new Set(DATA.map(r => r.country))].sort();
+  populateSelect("f-level", levels);
+  populateSelect("f-country", countries.map(c => c));
 
-// show level name in dropdown label
-Array.from(document.getElementById("f-level").options).forEach(opt => {
-  if (opt.value) {
-    opt.textContent = `${opt.value} — ${levelName(opt.value)}`;
-  }
-});
+  // show country name in dropdown label
+  Array.from(document.getElementById("f-country").options).forEach(opt => {
+    if (opt.value && COUNTRY_NAMES[opt.value]) {
+      opt.textContent = `${opt.value} — ${COUNTRY_NAMES[opt.value]}`;
+    }
+  });
+
+  // show level name in dropdown label
+  Array.from(document.getElementById("f-level").options).forEach(opt => {
+    if (opt.value) {
+      opt.textContent = `${opt.value} — ${levelName(opt.value)}`;
+    }
+  });
+}
 
 document.getElementById("f-status").value = state.status;
 
@@ -4523,5 +4531,29 @@ document.getElementById("ask-form").addEventListener("submit", e => {
 
 renderAskChips();
 
+// Paint immediately with the last known snapshot, then swap in live data once fetched.
+DATA = FALLBACK_RAW.map(parseBatch);
+refreshFilterOptions();
+document.getElementById("f-status").value = state.status;
 render();
+setAsOf("Showing cached snapshot · fetching live data…");
+
+fetch("/api/data")
+  .then(res => {
+    if (!res.ok) throw new Error("bad response " + res.status);
+    return res.json();
+  })
+  .then(payload => {
+    if (!payload || !Array.isArray(payload.batches)) throw new Error("malformed payload");
+    DATA = payload.batches.map(parseBatch);
+    refreshFilterOptions();
+    document.getElementById("f-status").value = state.status;
+    render();
+    const stamp = payload.generatedAt ? new Date(payload.generatedAt).toLocaleString() : new Date().toLocaleString();
+    setAsOf("Live · updated " + stamp);
+  })
+  .catch(err => {
+    console.error("Live data fetch failed, staying on cached snapshot:", err);
+    setAsOf("Cached snapshot (live refresh unavailable) · " + new Date().toDateString());
+  });
 </script>

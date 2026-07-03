@@ -1,0 +1,6 @@
+{
+  "name": "csoc-batch-sales",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CsoC Batch Explorer dashboard with a live-data serverless API"
+}

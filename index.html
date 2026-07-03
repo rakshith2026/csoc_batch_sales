@@ -1,49 +1,49 @@
 <title>CsoC Batch Explorer</title>
 <style>
   :root {
-    --bg: #f6f4ef;
+    --bg: #f5f6fb;
     --surface: #ffffff;
-    --surface-2: #efece4;
-    --text: #23291f;
-    --muted: #656f5f;
-    --border: #ddd7c8;
-    --accent: #2f6b4f;
-    --accent-soft: #e3ede6;
-    --warn: #a6631f;
-    --warn-soft: #f4e6d3;
-    --danger: #a13a3a;
-    --danger-soft: #f5e0dd;
+    --surface-2: #eceffa;
+    --text: #262a3d;
+    --muted: #6b7190;
+    --border: #dde1f2;
+    --accent: #4f6fe0;
+    --accent-soft: #e7ebfd;
+    --warn: #b8752a;
+    --warn-soft: #f7ebd9;
+    --danger: #b1453f;
+    --danger-soft: #f8e2df;
     --radius: 10px;
-    --shadow: 0 1px 2px rgba(35,41,31,0.06), 0 4px 14px rgba(35,41,31,0.05);
+    --shadow: 0 1px 2px rgba(38,42,61,0.06), 0 4px 14px rgba(38,42,61,0.06);
   }
   :root[data-theme="dark"] {
-    --bg: #14180f;
-    --surface: #1c2216;
-    --surface-2: #232a1c;
-    --text: #e9ede2;
-    --muted: #9aa48c;
-    --border: #2d3524;
-    --accent: #7fc99d;
-    --accent-soft: #223a2c;
-    --warn: #e0ab63;
+    --bg: #12141f;
+    --surface: #1a1d2e;
+    --surface-2: #212540;
+    --text: #e7e9f5;
+    --muted: #9098bf;
+    --border: #2a2e46;
+    --accent: #8fa8ff;
+    --accent-soft: #242a4a;
+    --warn: #e3b06b;
     --warn-soft: #3a2f1c;
-    --danger: #e08b83;
+    --danger: #e28a83;
     --danger-soft: #3a2320;
     --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 6px 20px rgba(0,0,0,0.35);
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #14180f;
-      --surface: #1c2216;
-      --surface-2: #232a1c;
-      --text: #e9ede2;
-      --muted: #9aa48c;
-      --border: #2d3524;
-      --accent: #7fc99d;
-      --accent-soft: #223a2c;
-      --warn: #e0ab63;
+      --bg: #12141f;
+      --surface: #1a1d2e;
+      --surface-2: #212540;
+      --text: #e7e9f5;
+      --muted: #9098bf;
+      --border: #2a2e46;
+      --accent: #8fa8ff;
+      --accent-soft: #242a4a;
+      --warn: #e3b06b;
       --warn-soft: #3a2f1c;
-      --danger: #e08b83;
+      --danger: #e28a83;
       --danger-soft: #3a2320;
       --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 6px 20px rgba(0,0,0,0.35);
     }
@@ -291,6 +291,13 @@
         <option value="closed">Closed</option>
       </select>
     </div>
+    <div class="field">
+      <label for="f-coach">Coach</label>
+      <select id="f-coach">
+        <option value="">All batches</option>
+        <option value="unassigned">No coach assigned</option>
+      </select>
+    </div>
     <div class="field search-field">
       <label for="f-search">Search coach / batch</label>
       <input type="search" id="f-search" placeholder="e.g. Hardik, IND-F3-133" />
@@ -331,7 +338,7 @@ const COUNTRY_NAMES = {
 
 const LEVEL_NAMES = {
   B: "Beginner",
-  F: "Foundation 1", F1: "Foundation 1", F2: "Foundation 2", F3: "Foundation 3", F4: "Foundation 4",
+  F1: "Foundation 1", F2: "Foundation 2", F3: "Foundation 3", F4: "Foundation 4",
   IN: "Intermediate", IN1: "Intermediate", IN2: "Intermediate", IN3: "Intermediate", IN4: "Intermediate",
   ADV: "Advanced", MP: "Advanced"
 };
@@ -347,7 +354,8 @@ function parseBatch(row) {
   }
   const parts = code.split("-").filter(Boolean);
   const country = (parts[0] || "?").toUpperCase();
-  const level = parts.length >= 2 ? parts[parts.length - 2].toUpperCase() : "?";
+  let level = parts.length >= 2 ? parts[parts.length - 2].toUpperCase() : "?";
+  if (level === "F") level = "F1"; // treat F and F1 as the same level
   return { ...row, batch_code: code, display_name: display, country, level };
 }
 
@@ -386,7 +394,7 @@ const VIEWS = [
   { key: "unfilled", label: "Unfilled — last week", test: r => inRange(r.start_date, lastWeekStart, lastWeekEnd) && r.registration_active === 1 },
 ];
 
-let state = { view: "all", level: "", country: "", status: "open", search: "", sortKey: "start_date", sortDir: "desc" };
+let state = { view: "all", level: "", country: "", status: "open", coach: "", search: "", sortKey: "start_date", sortDir: "desc" };
 
 function populateSelect(id, values) {
   const sel = document.getElementById(id);
@@ -433,10 +441,12 @@ function renderViews() {
       state.country = "";
       state.search = "";
       state.status = "";
+      state.coach = "";
       document.getElementById("f-level").value = "";
       document.getElementById("f-country").value = "";
       document.getElementById("f-search").value = "";
       document.getElementById("f-status").value = "";
+      document.getElementById("f-coach").value = "";
       render();
     };
     container.appendChild(btn);
@@ -450,6 +460,7 @@ function currentRows() {
   if (state.country) rows = rows.filter(r => r.country === state.country);
   if (state.status === "open") rows = rows.filter(r => r.registration_active === 1);
   if (state.status === "closed") rows = rows.filter(r => r.registration_active !== 1);
+  if (state.coach === "unassigned") rows = rows.filter(r => !r.coach_name || !r.coach_name.trim());
   if (state.search) {
     const q = state.search.toLowerCase();
     rows = rows.filter(r =>
@@ -558,12 +569,14 @@ document.querySelectorAll(".sort-th").forEach(a => {
 document.getElementById("f-level").addEventListener("change", e => { state.level = e.target.value; render(); });
 document.getElementById("f-country").addEventListener("change", e => { state.country = e.target.value; render(); });
 document.getElementById("f-status").addEventListener("change", e => { state.status = e.target.value; render(); });
+document.getElementById("f-coach").addEventListener("change", e => { state.coach = e.target.value; render(); });
 document.getElementById("f-search").addEventListener("input", e => { state.search = e.target.value; render(); });
 document.getElementById("reset-btn").addEventListener("click", () => {
-  state = { view: "all", level: "", country: "", status: "open", search: "", sortKey: "start_date", sortDir: "desc" };
+  state = { view: "all", level: "", country: "", status: "open", coach: "", search: "", sortKey: "start_date", sortDir: "desc" };
   document.getElementById("f-level").value = "";
   document.getElementById("f-country").value = "";
   document.getElementById("f-status").value = "open";
+  document.getElementById("f-coach").value = "";
   document.getElementById("f-search").value = "";
   render();
 });

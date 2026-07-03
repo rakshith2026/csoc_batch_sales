@@ -283,6 +283,14 @@
       <label for="f-country">Country</label>
       <select id="f-country"><option value="">All countries</option></select>
     </div>
+    <div class="field">
+      <label for="f-status">Status</label>
+      <select id="f-status">
+        <option value="">All statuses</option>
+        <option value="open">Open</option>
+        <option value="closed">Closed</option>
+      </select>
+    </div>
     <div class="field search-field">
       <label for="f-search">Search coach / batch</label>
       <input type="search" id="f-search" placeholder="e.g. Hardik, IND-F3-133" />
@@ -370,7 +378,7 @@ const VIEWS = [
   { key: "unfilled", label: "Unfilled — last week", test: r => inRange(r.start_date, lastWeekStart, lastWeekEnd) && r.registration_active === 1 },
 ];
 
-let state = { view: "all", level: "", country: "", search: "", sortKey: "start_date", sortDir: "desc" };
+let state = { view: "all", level: "", country: "", status: "open", search: "", sortKey: "start_date", sortDir: "desc" };
 
 function populateSelect(id, values) {
   const sel = document.getElementById(id);
@@ -394,6 +402,8 @@ Array.from(document.getElementById("f-country").options).forEach(opt => {
   }
 });
 
+document.getElementById("f-status").value = state.status;
+
 function renderViews() {
   const container = document.getElementById("views");
   container.innerHTML = "";
@@ -412,6 +422,8 @@ function currentRows() {
   let rows = DATA.filter(viewDef.test);
   if (state.level) rows = rows.filter(r => r.level === state.level);
   if (state.country) rows = rows.filter(r => r.country === state.country);
+  if (state.status === "open") rows = rows.filter(r => r.registration_active === 1);
+  if (state.status === "closed") rows = rows.filter(r => r.registration_active !== 1);
   if (state.search) {
     const q = state.search.toLowerCase();
     rows = rows.filter(r =>
@@ -519,11 +531,13 @@ document.querySelectorAll(".sort-th").forEach(a => {
 
 document.getElementById("f-level").addEventListener("change", e => { state.level = e.target.value; render(); });
 document.getElementById("f-country").addEventListener("change", e => { state.country = e.target.value; render(); });
+document.getElementById("f-status").addEventListener("change", e => { state.status = e.target.value; render(); });
 document.getElementById("f-search").addEventListener("input", e => { state.search = e.target.value; render(); });
 document.getElementById("reset-btn").addEventListener("click", () => {
-  state = { view: "all", level: "", country: "", search: "", sortKey: "start_date", sortDir: "desc" };
+  state = { view: "all", level: "", country: "", status: "open", search: "", sortKey: "start_date", sortDir: "desc" };
   document.getElementById("f-level").value = "";
   document.getElementById("f-country").value = "";
+  document.getElementById("f-status").value = "open";
   document.getElementById("f-search").value = "";
   render();
 });

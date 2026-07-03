@@ -260,6 +260,64 @@
   a.sort-th { color: inherit; text-decoration: none; cursor: pointer; user-select: none; }
   a.sort-th:hover { color: var(--text); }
   a.sort-th .arrow { opacity: 0.5; font-size: 0.65rem; }
+
+  .ask {
+    margin-top: 30px;
+    padding: 18px 20px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+  .ask h2 {
+    font-family: Georgia, "Iowan Old Style", "Times New Roman", serif;
+    font-size: 1.15rem;
+    margin: 0 0 3px;
+  }
+  .ask-sub { color: var(--muted); font-size: 0.8rem; margin: 0 0 14px; }
+  .ask-form { display: flex; gap: 8px; }
+  .ask-form input {
+    flex: 1;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 7px;
+    padding: 9px 12px;
+    font-size: 0.88rem;
+  }
+  .ask-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .ask-form button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 7px;
+    padding: 9px 18px;
+    font-size: 0.86rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .ask-form button:hover { filter: brightness(1.06); }
+  .ask-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .ask-chip {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 999px;
+    padding: 4px 11px;
+    font-size: 0.76rem;
+    cursor: pointer;
+  }
+  .ask-chip:hover { color: var(--text); border-color: var(--accent); }
+  .ask-answer {
+    margin-top: 14px;
+    padding: 12px 14px;
+    background: var(--accent-soft);
+    border-radius: 8px;
+    font-size: 0.88rem;
+    line-height: 1.5;
+    white-space: pre-line;
+  }
+  .ask-answer .q { display: block; color: var(--muted); font-size: 0.76rem; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
 </style>
 <div class="page">
   <header class="top">
@@ -327,6 +385,17 @@
   </div>
 
   <footer class="note" id="footnote"></footer>
+
+  <section class="ask">
+    <h2>Ask about this data</h2>
+    <p class="ask-sub">Answers are computed directly from the table above — no external calls, no guessing.</p>
+    <form id="ask-form" class="ask-form">
+      <input type="text" id="ask-input" placeholder="e.g. how many batches are unfilled? / top rated coach? / coaches with no FIDE rating" autocomplete="off" />
+      <button type="submit">Ask</button>
+    </form>
+    <div class="ask-chips" id="ask-chips"></div>
+    <div class="ask-answer" id="ask-answer" style="display:none;"></div>
+  </section>
 </div>
 
 <script>
@@ -4055,6 +4124,11 @@ const LEVEL_NAMES = {
 };
 function levelName(code) { return LEVEL_NAMES[code] || code; }
 
+// Coaches whose fide_id is wrong/missing in the source data but whose real rating is known.
+const COACH_FIDE_OVERRIDES = {
+  "Vinay Bhatt": 2025,
+};
+
 function parseBatch(row) {
   let code = row.batch_name || "";
   let display = row.batch_display_name || "";
@@ -4067,7 +4141,13 @@ function parseBatch(row) {
   const country = (parts[0] || "?").toUpperCase();
   let level = parts.length >= 2 ? parts[parts.length - 2].toUpperCase() : "?";
   if (level === "F") level = "F1"; // treat F and F1 as the same level
-  return { ...row, batch_code: code, display_name: display, country, level };
+  const coachName = (row.coach_name || "").trim();
+  // A FIDE rating is only meaningful when it's actually attached to a named coach.
+  let fideRating = coachName ? row.fide_rating ?? null : null;
+  if (coachName && COACH_FIDE_OVERRIDES[coachName] != null) {
+    fideRating = COACH_FIDE_OVERRIDES[coachName];
+  }
+  return { ...row, batch_code: code, display_name: display, country, level, coach_name: coachName, fide_rating: fideRating };
 }
 
 const DATA = RAW.map(parseBatch);
@@ -4292,6 +4372,156 @@ document.getElementById("reset-btn").addEventListener("click", () => {
   document.getElementById("f-search").value = "";
   render();
 });
+
+// --- Ask-the-table Q&A engine: pattern-matches a question and computes the answer directly from DATA. ---
+function fmtList(items, max = 12) {
+  const shown = items.slice(0, max);
+  let out = shown.join(", ");
+  if (items.length > max) out += `, and ${items.length - max} more`;
+  return out;
+}
+
+function answerQuestion(raw) {
+  const q = raw.trim().toLowerCase();
+  if (!q) return "Type a question about the batches above.";
+
+  const withCoach = DATA.filter(r => r.coach_name);
+  const rated = withCoach.filter(r => r.fide_rating != null);
+
+  // Unfilled / starting-this-week counts (mirror the view definitions)
+  if (/(unfilled|under.?filled)/.test(q)) {
+    const rows = DATA.filter(VIEWS[2].test);
+    if (!rows.length) return "No unfilled batches from last week.";
+    return `${rows.length} unfilled batch(es) from last week:\n` +
+      fmtList(rows.map(r => `${r.batch_code} (${r.country}, coach: ${r.coach_name || "unassigned"})`), 20);
+  }
+  if (/start(ing)?.*(this )?week/.test(q)) {
+    const rows = DATA.filter(VIEWS[1].test);
+    if (!rows.length) return "No batches are starting this week.";
+    return `${rows.length} batch(es) starting this week:\n` + fmtList(rows.map(r => r.batch_code), 20);
+  }
+
+  // Highest / top rated coach
+  if (/(highest|top|best|max).*(fide|rating)/.test(q)) {
+    if (!rated.length) return "No coaches with a recorded FIDE rating.";
+    const top = rated.reduce((a, b) => (b.fide_rating > a.fide_rating ? b : a));
+    return `${top.coach_name} has the highest FIDE rating on record: ${top.fide_rating} (batch ${top.batch_code}).`;
+  }
+  // Lowest rated coach
+  if (/(lowest|min|worst).*(fide|rating)/.test(q)) {
+    if (!rated.length) return "No coaches with a recorded FIDE rating.";
+    const low = rated.reduce((a, b) => (b.fide_rating < a.fide_rating ? b : a));
+    return `${low.coach_name} has the lowest FIDE rating on record: ${low.fide_rating} (batch ${low.batch_code}).`;
+  }
+  // Coaches without a FIDE rating
+  if (/(no|missing|without).*(fide|rating)/.test(q)) {
+    const names = [...new Set(withCoach.filter(r => r.fide_rating == null).map(r => r.coach_name))].sort();
+    if (!names.length) return "Every coach has a recorded FIDE rating.";
+    return `${names.length} coach(es) with no FIDE rating on file:\n` + fmtList(names, 25);
+  }
+  // Batches with no coach assigned
+  if (/(no coach|unassigned coach|without.*coach|batches.*no coach)/.test(q)) {
+    const rows = DATA.filter(r => !r.coach_name);
+    if (!rows.length) return "Every batch has a coach assigned.";
+    return `${rows.length} batch(es) with no coach assigned:\n` + fmtList(rows.map(r => r.batch_code), 25);
+  }
+  // FIDE rating of a specific named coach
+  const coachNames = [...new Set(withCoach.map(r => r.coach_name))];
+  const mentioned = coachNames.find(name => q.includes(name.toLowerCase()));
+  if (mentioned && /(fide|rating)/.test(q)) {
+    const row = withCoach.find(r => r.coach_name === mentioned && r.fide_rating != null);
+    if (!row) return `${mentioned} has no FIDE rating on file.`;
+    return `${mentioned}'s FIDE rating is ${row.fide_rating}.`;
+  }
+  // Batches for a specific coach
+  if (mentioned) {
+    const rows = withCoach.filter(r => r.coach_name === mentioned);
+    return `${mentioned} coaches ${rows.length} batch(es): ` + fmtList(rows.map(r => r.batch_code), 25);
+  }
+
+  // Country counts, e.g. "how many batches in india" / "IND batches"
+  for (const c of countries) {
+    const name = (COUNTRY_NAMES[c] || "").toLowerCase();
+    if (q.includes(c.toLowerCase()) || (name && q.includes(name))) {
+      const rows = DATA.filter(r => r.country === c);
+      return `${rows.length} batch(es) in ${COUNTRY_NAMES[c] || c}.`;
+    }
+  }
+
+  // Level counts, e.g. "how many beginner batches"
+  for (const lvl of levels) {
+    const name = levelName(lvl).toLowerCase();
+    if (q.includes(name) || q.includes(lvl.toLowerCase())) {
+      const rows = DATA.filter(r => r.level === lvl);
+      return `${rows.length} batch(es) at ${levelName(lvl)} level.`;
+    }
+  }
+
+  // Open / closed registration counts
+  if (/(open|available).*(batch|registration|seat)/.test(q) || q.includes("registration open")) {
+    const rows = DATA.filter(r => r.registration_active === 1);
+    return `${rows.length} batch(es) currently have open registration.`;
+  }
+  if (/(closed).*(batch|registration|seat)/.test(q)) {
+    const rows = DATA.filter(r => r.registration_active !== 1);
+    return `${rows.length} batch(es) currently have closed registration.`;
+  }
+
+  // Total / how many batches overall
+  if (/(how many|total|count).*(batch)/.test(q)) {
+    return `There are ${DATA.length} batches in total.`;
+  }
+
+  // Entries for a specific batch code
+  const codeMatch = DATA.find(r => q.includes(r.batch_code.toLowerCase()));
+  if (codeMatch) {
+    return `${codeMatch.batch_code}: coach ${codeMatch.coach_name || "unassigned"}, `
+      + `${codeMatch.fide_rating != null ? "FIDE " + codeMatch.fide_rating : "no FIDE rating"}, `
+      + `${codeMatch.entrycount ?? 0} entries, status ${codeMatch.registration_active === 1 ? "open" : "closed"}, `
+      + `runs ${fmtDate(codeMatch.start_date)} to ${fmtDate(codeMatch.end_date)}.`;
+  }
+
+  return "I couldn't match that to a known question. Try asking about: unfilled batches, batches starting this week, top/lowest FIDE rating, coaches with no rating, batches with no coach, a specific coach or batch code, a country, or a level.";
+}
+
+const ASK_EXAMPLES = [
+  "How many batches are unfilled?",
+  "Which coach has the highest FIDE rating?",
+  "Coaches with no FIDE rating",
+  "Batches with no coach assigned",
+  "How many batches starting this week?",
+];
+
+function renderAskChips() {
+  const container = document.getElementById("ask-chips");
+  container.innerHTML = "";
+  ASK_EXAMPLES.forEach(ex => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "ask-chip";
+    chip.textContent = ex;
+    chip.onclick = () => {
+      document.getElementById("ask-input").value = ex;
+      showAnswer(ex);
+    };
+    container.appendChild(chip);
+  });
+}
+
+function showAnswer(question) {
+  const box = document.getElementById("ask-answer");
+  const answer = answerQuestion(question);
+  box.style.display = "block";
+  box.innerHTML = `<span class="q">${question}</span>${answer}`;
+}
+
+document.getElementById("ask-form").addEventListener("submit", e => {
+  e.preventDefault();
+  const val = document.getElementById("ask-input").value;
+  if (val.trim()) showAnswer(val);
+});
+
+renderAskChips();
 
 render();
 </script>

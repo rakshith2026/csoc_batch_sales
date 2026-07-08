@@ -243,6 +243,8 @@
   .chip.status-open::before { background: var(--warn); }
   .chip.status-closed { background: var(--surface-2); color: var(--muted); }
   .chip.status-closed::before { background: var(--muted); }
+  .chip.status-inactive { background: var(--danger-soft); color: var(--danger); }
+  .chip.status-inactive::before { background: var(--danger); }
 
   .empty {
     padding: 40px 20px;
@@ -347,6 +349,7 @@
         <option value="">All statuses</option>
         <option value="open">Open</option>
         <option value="closed">Closed</option>
+        <option value="inactive">Inactive</option>
       </select>
     </div>
     <div class="field">
@@ -4184,7 +4187,7 @@ document.getElementById("footnote").textContent =
 const VIEWS = [
   { key: "all", label: "All batches", test: () => true },
   { key: "starting", label: "Starting this week", test: r => inRange(r.start_date, thisWeekStart, thisWeekEnd) },
-  { key: "unfilled", label: "Unfilled — last week", test: r => inRange(r.start_date, lastWeekStart, lastWeekEnd) && r.registration_active === 1 },
+  { key: "unfilled", label: "Unfilled — last week", test: r => inRange(r.start_date, lastWeekStart, lastWeekEnd) && r.registration_active === 1 && !r.inactive_batch },
 ];
 
 let state = { view: "all", level: "", country: "", status: "open", coach: "", search: "", sortKey: "start_date", sortDir: "desc" };
@@ -4255,11 +4258,8 @@ function renderViews() {
 function currentRows() {
   const viewDef = VIEWS.find(v => v.key === state.view);
   let rows = DATA.filter(viewDef.test);
-  if (state.level) rows = rows.filter(r => r.level === state.level);
-  if (state.country) rows = rows.filter(r => r.country === state.country);
-  if (state.status === "open") rows = rows.filter(r => r.registration_active === 1);
-  if (state.status === "closed") rows = rows.filter(r => r.registration_active !== 1);
-  if (state.coach === "unassigned") rows = rows.filter(r => !r.coach_name || !r.coach_name.trim());
+  // A text search is a global lookup — it overrides Level/Country/Status/Coach so a
+  // match never gets silently hidden by an unrelated filter (e.g. Status = Open).
   if (state.search) {
     const q = state.search.toLowerCase();
     rows = rows.filter(r =>
@@ -4267,6 +4267,13 @@ function currentRows() {
       (r.batch_code || "").toLowerCase().includes(q) ||
       (r.display_name || "").toLowerCase().includes(q)
     );
+  } else {
+    if (state.level) rows = rows.filter(r => r.level === state.level);
+    if (state.country) rows = rows.filter(r => r.country === state.country);
+    if (state.status === "open") rows = rows.filter(r => !r.inactive_batch && r.registration_active === 1);
+    if (state.status === "closed") rows = rows.filter(r => !r.inactive_batch && r.registration_active !== 1);
+    if (state.status === "inactive") rows = rows.filter(r => r.inactive_batch);
+    if (state.coach === "unassigned") rows = rows.filter(r => !r.coach_name || !r.coach_name.trim());
   }
   rows = rows.slice().sort((a, b) => {
     let av = a[state.sortKey], bv = b[state.sortKey];
@@ -4283,12 +4290,14 @@ function renderStats() {
   const total = DATA.length;
   const startingCount = DATA.filter(VIEWS[1].test).length;
   const unfilledCount = DATA.filter(VIEWS[2].test).length;
-  const openReg = DATA.filter(r => r.registration_active === 1).length;
+  const openReg = DATA.filter(r => !r.inactive_batch && r.registration_active === 1).length;
+  const inactiveCount = DATA.filter(r => r.inactive_batch).length;
   const stats = [
     { label: "Total batches", n: total, cls: "" },
     { label: "Starting this week", n: startingCount, cls: "accent" },
     { label: "Unfilled from last week", n: unfilledCount, cls: "warn" },
     { label: "Registration open (all)", n: openReg, cls: "" },
+    { label: "Inactive batches", n: inactiveCount, cls: "" },
   ];
   const container = document.getElementById("stats");
   container.innerHTML = "";
@@ -4319,6 +4328,8 @@ function renderTable() {
   rows.forEach(r => {
     const tr = document.createElement("tr");
     const statusOpen = r.registration_active === 1;
+    const statusLabel = r.inactive_batch ? "Inactive" : (statusOpen ? "Open" : "Closed");
+    const statusClass = r.inactive_batch ? "status-inactive" : (statusOpen ? "status-open" : "status-closed");
     tr.innerHTML = `
       <td class="batch-code">${r.batch_code}</td>
       <td class="display-name">${r.display_name || "—"}</td>
@@ -4328,7 +4339,7 @@ function renderTable() {
       <td class="num">${r.fide_rating ?? "—"}</td>
       <td class="date">${fmtDate(r.start_date)}</td>
       <td class="date">${fmtDate(r.end_date)}</td>
-      <td><span class="chip ${statusOpen ? "status-open" : "status-closed"}">${statusOpen ? "Open" : "Closed"}</span></td>
+      <td><span class="chip ${statusClass}">${statusLabel}</span></td>
       <td class="num">${r.entrycount ?? 0}</td>
     `;
     tbody.appendChild(tr);
@@ -4465,13 +4476,19 @@ function answerQuestion(raw) {
     }
   }
 
+  // Inactive batches
+  if (/inactive/.test(q)) {
+    const rows = DATA.filter(r => r.inactive_batch);
+    if (!rows.length) return "No batches are marked inactive.";
+    return `${rows.length} inactive batch(es):\n` + fmtList(rows.map(r => r.batch_code), 25);
+  }
   // Open / closed registration counts
   if (/(open|available).*(batch|registration|seat)/.test(q) || q.includes("registration open")) {
-    const rows = DATA.filter(r => r.registration_active === 1);
+    const rows = DATA.filter(r => !r.inactive_batch && r.registration_active === 1);
     return `${rows.length} batch(es) currently have open registration.`;
   }
   if (/(closed).*(batch|registration|seat)/.test(q)) {
-    const rows = DATA.filter(r => r.registration_active !== 1);
+    const rows = DATA.filter(r => !r.inactive_batch && r.registration_active !== 1);
     return `${rows.length} batch(es) currently have closed registration.`;
   }
 
@@ -4483,9 +4500,10 @@ function answerQuestion(raw) {
   // Entries for a specific batch code
   const codeMatch = DATA.find(r => q.includes(r.batch_code.toLowerCase()));
   if (codeMatch) {
+    const status = codeMatch.inactive_batch ? "inactive" : (codeMatch.registration_active === 1 ? "open" : "closed");
     return `${codeMatch.batch_code}: coach ${codeMatch.coach_name || "unassigned"}, `
       + `${codeMatch.fide_rating != null ? "FIDE " + codeMatch.fide_rating : "no FIDE rating"}, `
-      + `${codeMatch.entrycount ?? 0} entries, status ${codeMatch.registration_active === 1 ? "open" : "closed"}, `
+      + `${codeMatch.entrycount ?? 0} entries, status ${status}, `
       + `runs ${fmtDate(codeMatch.start_date)} to ${fmtDate(codeMatch.end_date)}.`;
   }
 

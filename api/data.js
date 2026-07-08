@@ -100,6 +100,7 @@ function parseBatch(row, ratingsById) {
     start_date: row.start_date,
     end_date: row.end_date,
     registration_active: row.registration_active,
+    inactive_batch: !!row.inactive_batch,
     entrycount: row.entrycount,
   };
 }

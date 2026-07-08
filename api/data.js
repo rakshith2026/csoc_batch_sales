@@ -120,7 +120,7 @@ module.exports = async function handler(req, res) {
 
     const enriched = rawBatches.map(row => parseBatch(row, ratingsById));
 
-    res.setHeader("Cache-Control", "s-maxage=60, stale-while-revalidate=30");
+    res.setHeader("Cache-Control", "no-store");
     res.status(200).json({ generatedAt: new Date().toISOString(), batches: enriched });
   } catch (err) {
     res.status(502).json({ error: "Failed to fetch live data", detail: String(err && err.message || err) });

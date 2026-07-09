@@ -54,9 +54,18 @@ async function downloadBatches(cookies) {
   return res.json();
 }
 
-async function fetchFideRating(fideId) {
+// A coach's FIDE rating doesn't change minute-to-minute, so it's cached in memory
+// (survives across warm invocations of this function) to avoid re-querying
+// chesstools.org for ~60 coaches on every single page load — that round trip is
+// what was pushing total response time past a minute and causing timeouts.
+const RATING_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const ratingCache = new Map(); // fideId -> { value, fetchedAt }
+
+async function fetchFideRatingUncached(fideId) {
   try {
-    const res = await fetch(`https://api.chesstools.org/fide/player_history/?fide_id=${fideId}`);
+    const res = await fetch(`https://api.chesstools.org/fide/player_history/?fide_id=${fideId}`, {
+      signal: AbortSignal.timeout(5000),
+    });
     if (!res.ok) return null;
     const history = await res.json();
     if (!Array.isArray(history) || !history.length) return null;
@@ -66,6 +75,18 @@ async function fetchFideRating(fideId) {
   } catch {
     return null;
   }
+}
+
+async function fetchFideRating(fideId) {
+  const cached = ratingCache.get(fideId);
+  if (cached && Date.now() - cached.fetchedAt < RATING_CACHE_TTL_MS) {
+    return cached.value;
+  }
+  const value = await fetchFideRatingUncached(fideId);
+  // Keep serving the old cached value if this fetch failed/timed out and we have one.
+  if (value == null && cached) return cached.value;
+  ratingCache.set(fideId, { value, fetchedAt: Date.now() });
+  return value;
 }
 
 function parseBatch(row, ratingsById) {
